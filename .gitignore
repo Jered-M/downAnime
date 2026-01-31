@@ -14,11 +14,15 @@ dist_new/
 build/
 bin/
 obj/
+server/downloads/
+client/dist/
+client/web_build/
 
 # Environment variables
 .env
 .env.*
 !.env.example
+*.local
 
 # OS files
 .DS_Store

@@ -117,7 +117,7 @@ app.post('/analyze', async (req, res) => {
     }
 });
 
-app.post('/download', (req, res) => {
+app.post('/download', async (req, res) => {
     const { url, format_id, referer, title } = req.body;
     console.log(`\n📥 TÉLÉCHARGEMENT : ${title}`);
 
@@ -137,6 +137,18 @@ app.post('/download', (req, res) => {
     const ypath = getYdlPath();
     console.log(`📥 Lancement du téléchargement avec : ${ypath}`);
 
+    // On vérifie si yt-dlp est accessible
+    const checkYdl = await new Promise(resolve => {
+        const p = spawn(ypath, ['--version']);
+        p.on('close', code => resolve(code === 0));
+        p.on('error', () => resolve(false));
+    });
+
+    if (!checkYdl) {
+        console.error("❌ yt-dlp introuvable ou ne répond pas.");
+        return res.status(500).json({ error: "Composant yt-dlp manquant sur le serveur." });
+    }
+
     const args = [
         '--no-check-certificates',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -144,9 +156,16 @@ app.post('/download', (req, res) => {
     ];
 
     if (referer) args.push('--referer', referer);
-    if (format_id && format_id.includes('audio')) args.push('-f', 'bestaudio');
+    // Pour les liens m3u8, il faut souvent forcer le format si on pipe vers stdout
+    if (url.includes('.m3u8')) {
+        args.push('--hls-prefer-native'); // Parfois plus stable sans ffmpeg pour le stream brut
+    }
 
-    const ydl = spawn(getYdlPath(), args);
+    if (format_id && format_id.includes('audio')) {
+        args.push('-f', 'bestaudio');
+    }
+
+    const ydl = spawn(ypath, args);
 
     const safeTitle = (title || 'video').replace(/[^a-z0-9]/gi, '_').substring(0, 50);
     res.setHeader('Content-Disposition', `attachment; filename="${safeTitle}.mp4"`);
@@ -154,9 +173,18 @@ app.post('/download', (req, res) => {
 
     ydl.stdout.pipe(res);
 
+    let errorData = '';
+    ydl.stderr.on('data', (data) => {
+        errorData += data.toString();
+    });
+
     ydl.on('close', (code) => {
-        if (code !== 0) console.error(`❌ Échec yt-dlp code ${code}`);
-        else console.log(`✅ Téléchargement terminé`);
+        if (code !== 0) {
+            console.error(`❌ Échec yt-dlp code ${code}: ${errorData}`);
+            // Note: on ne peut plus envoyer res.json car res.setHeader/pipe a déjà commencé
+        } else {
+            console.log(`✅ Téléchargement terminé`);
+        }
     });
 
     ydl.on('error', (err) => {
