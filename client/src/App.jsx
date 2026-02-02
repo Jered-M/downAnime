@@ -21,6 +21,7 @@ import ReactPlayer from 'react-player';
 import './App.css';
 import BrowserMode from './BrowserMode';
 import CatalogMode from './CatalogMode';
+import DownloadBar from './DownloadBar';
 
 const API_BASE = 'http://localhost:5000';
 
@@ -31,8 +32,10 @@ function App() {
   const [showModal, setShowModal] = useState(false);
   const [mode, setMode] = useState('simple'); // simple, catalog, browser
   const [downloadingId, setDownloadingId] = useState(null);
+  const [downloads, setDownloads] = useState([]);
 
   const browserTitleRef = useRef('');
+  const abortControllersRef = useRef({});
 
   useEffect(() => {
     // Écouteur spécial pour le RADAR Electron
@@ -71,15 +74,42 @@ function App() {
   };
 
   const handleDownload = async (format) => {
+    console.log("🖱️ CLIC TÉLÉCHARGEMENT SUR :", format);
+
+    const downloadId = `dl-${Date.now()}`;
+    const abortController = new AbortController();
+    abortControllersRef.current[downloadId] = abortController;
+
+    const downloadItem = {
+      id: downloadId,
+      title: videoData?.title || 'Vidéo',
+      status: 'downloading',
+      progress: 0,
+      loaded: 0
+    };
+
+    setDownloads(prev => [...prev, downloadItem]);
     setDownloadingId(format.id);
+
     try {
+      console.log(`📤 Envoi vers ${API_BASE}/download...`);
       const response = await axios.post(`${API_BASE}/download`, {
         url: format.url,
         format_id: format.id,
-        referer: videoData.referer || url, // Priorité au referer détecté par le radar
+        referer: videoData.referer || url,
         title: videoData.title
       }, {
-        responseType: 'blob'
+        responseType: 'blob',
+        signal: abortController.signal,
+        onDownloadProgress: (progressEvent) => {
+          const loaded = progressEvent.loaded;
+          const total = progressEvent.total;
+          const progress = total ? Math.round((loaded * 100) / total) : 0;
+
+          setDownloads(prev => prev.map(d =>
+            d.id === downloadId ? { ...d, progress, loaded } : d
+          ));
+        }
       });
 
       const downloadUrl = window.URL.createObjectURL(new Blob([response.data]));
@@ -96,11 +126,48 @@ function App() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(downloadUrl);
+
+      setDownloads(prev => prev.map(d =>
+        d.id === downloadId ? { ...d, status: 'completed', progress: 100 } : d
+      ));
+
+      setTimeout(() => {
+        setDownloads(prev => prev.filter(d => d.id !== downloadId));
+      }, 5000);
+
     } catch (err) {
-      console.error(err);
+      if (axios.isCancel(err)) {
+        console.log("📥 Téléchargement annulé par l'utilisateur");
+        setDownloads(prev => prev.map(d =>
+          d.id === downloadId ? { ...d, status: 'cancelled' } : d
+        ));
+      } else {
+        console.error(err);
+        setDownloads(prev => prev.map(d =>
+          d.id === downloadId ? { ...d, status: 'error' } : d
+        ));
+
+        const errorMsg = err.response?.data?.error || "Erreur lors du téléchargement. Vérifiez que yt-dlp et FFmpeg sont bien installés dans le dossier server.";
+        alert(errorMsg);
+      }
+
+      setTimeout(() => {
+        setDownloads(prev => prev.filter(d => d.id !== downloadId));
+      }, 5000);
     } finally {
+      delete abortControllersRef.current[downloadId];
       setDownloadingId(null);
     }
+  };
+
+  const handleCancelDownload = (downloadId) => {
+    if (abortControllersRef.current[downloadId]) {
+      abortControllersRef.current[downloadId].abort();
+    }
+  };
+
+  const handleRemoveDownload = (downloadId) => {
+    setDownloads(prev => prev.filter(d => d.id !== downloadId));
   };
 
   return (
@@ -137,7 +204,7 @@ function App() {
               animate={{ opacity: 1, y: 0 }}
             >
               <h1 className="hero-title">Téléchargez sans limites.</h1>
-              <p className="hero-subtitle">Le moteur le plus puissant pour YouTube, Facebook et vos Animes préférés.</p>
+              <p className="hero-subtitle">Le moteur Elite pour <strong>YouTube</strong>, <strong>Facebook</strong>, <strong>TikTok</strong>, <strong>Instagram</strong> et +1400 sites.</p>
 
               <form className="search-bar-hero" onSubmit={handleAnalyze}>
                 <div className="search-input-group">
@@ -145,7 +212,7 @@ function App() {
                   <input
                     type="text"
                     className="search-input-hero"
-                    placeholder="Collez un lien ici..."
+                    placeholder="Collez le lien de la vidéo (YouTube, FB, TikTok...)"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                   />
@@ -156,25 +223,41 @@ function App() {
                 </button>
               </form>
 
+              <div className="social-badges">
+                <span className="badge">YouTube</span>
+                <span className="badge">Facebook</span>
+                <span className="badge">Instagram</span>
+                <span className="badge">TikTok</span>
+              </div>
+
               <div className="info-cards">
                 <div className="info-card">
                   <CheckCircle size={20} className="text-accent" />
-                  <p>1400+ Sites supportés</p>
+                  <p>Qualité HD Maximale</p>
                 </div>
                 <div className="info-card">
                   <Globe size={20} className="text-accent" />
-                  <p>Mode Radar Intégré</p>
+                  <p>Radar Anti-Blocage</p>
                 </div>
               </div>
             </motion.div>
           </div>
         ) : mode === 'catalog' ? (
-          <CatalogMode />
+          <CatalogMode
+            downloads={downloads}
+            setDownloads={setDownloads}
+            abortControllersRef={abortControllersRef}
+          />
         ) : (
           <BrowserMode
             onExit={() => setMode('simple')}
             onTitleUpdate={(t) => { if (t) browserTitleRef.current = t; }}
-            onVideoDetected={(data) => setVideoData(data)}
+            onVideoDetected={(data) => {
+              if (data && data.formats && data.formats[0]) {
+                handleDownload(data.formats[0]);
+              }
+            }}
+            videoData={videoData}
           />
         )}
       </main>
@@ -221,28 +304,11 @@ function App() {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {mode === 'browser' && videoData && (
-          <motion.div
-            className="browser-download-bar-premium"
-            initial={{ y: 100 }}
-            animate={{ y: 0 }}
-            exit={{ y: 100 }}
-          >
-            <div className="detection-badge">NOUVELLE VIDÉO</div>
-            <div className="bar-title">{videoData.title}</div>
-            <div className="bar-actions">
-              {videoData.formats.slice(0, 2).map(fmt => (
-                <button key={fmt.id} className="mini-download-btn" onClick={() => handleDownload(fmt)} disabled={downloadingId === fmt.id}>
-                  {downloadingId === fmt.id ? <Loader2 className="spinning" size={14} /> : <Download size={14} />}
-                  {fmt.resolution.split(' ')[0]}
-                </button>
-              ))}
-              <button className="bar-close" onClick={() => setVideoData(null)}><X size={16} /></button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <DownloadBar
+        downloads={downloads}
+        onRemove={handleRemoveDownload}
+        onCancel={handleCancelDownload}
+      />
     </div>
   );
 }

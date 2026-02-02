@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, RotateCw, Globe, X, Home } from 'lucide-react';
 
-export default function BrowserMode({ onVideoDetected, onTitleUpdate, onExit }) {
+export default function BrowserMode({ onVideoDetected, onTitleUpdate, onExit, videoData }) {
     const [url, setUrl] = useState('https://v5.voiranime.com');
     const [inputUrl, setInputUrl] = useState('https://v5.voiranime.com');
     const [isLoading, setIsLoading] = useState(false);
     const webviewRef = useRef(null);
+
+    // ... (rest of the logic remains the same)
 
     useEffect(() => {
         const webview = webviewRef.current;
@@ -88,6 +90,30 @@ export default function BrowserMode({ onVideoDetected, onTitleUpdate, onExit }) 
                         />
                     </div>
                 </form>
+
+                {videoData && (
+                    <button
+                        onClick={() => onVideoDetected(videoData)}
+                        className="elite-download-btn pulse-glow"
+                        style={{
+                            background: 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)',
+                            color: 'white',
+                            border: 'none',
+                            padding: '8px 20px',
+                            borderRadius: '12px',
+                            fontWeight: 'bold',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            cursor: 'pointer',
+                            boxShadow: '0 0 20px rgba(139, 92, 246, 0.4)',
+                            animation: 'pulse 1.5s infinite'
+                        }}
+                    >
+                        <ArrowRight size={18} />
+                        TÉLÉCHARGER
+                    </button>
+                )}
             </div>
 
             {/* Webview Area */}
