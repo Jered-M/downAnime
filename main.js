@@ -9,18 +9,34 @@ let mainWindow;
 let serverProcess;
 
 function startServer() {
-    // Le serveur est TOUJOURS dans le dossier server/ à la racine du projet
     const serverPath = path.join(__dirname, 'server/index.js');
+    const serverDir = path.join(__dirname, 'server');
 
     console.log("🚀 Lancement du serveur depuis :", serverPath);
 
     serverProcess = fork(serverPath, [], {
-        silent: false, // On veut voir les logs
+        silent: true, // On capture nous-mêmes pour rediriger vers la console Electron
+        cwd: serverDir, // TRÈS IMPORTANT : définit le dossier de travail sur /server
         env: { ...process.env, PORT: 5000 }
     });
 
+    serverProcess.stdout.on('data', (data) => {
+        console.log(`[SERVEUR] ${data.toString().trim()}`);
+    });
+
+    serverProcess.stderr.on('data', (data) => {
+        console.error(`[SERVEUR-ERREUR] ${data.toString().trim()}`);
+    });
+
     serverProcess.on('error', (err) => {
-        console.error('❌ Erreur serveur:', err);
+        console.error('❌ Erreur critique serveur:', err);
+    });
+
+    serverProcess.on('exit', (code) => {
+        console.log(`⚠️ Serveur arrêté (Code: ${code}). Tentative de relance dans 2s...`);
+        if (code !== 0) {
+            setTimeout(startServer, 2000);
+        }
     });
 }
 

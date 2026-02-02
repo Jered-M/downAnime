@@ -97,7 +97,7 @@ export default function CatalogMode({ downloads, setDownloads, abortControllersR
                 document.body.appendChild(link);
                 link.click();
                 link.remove();
-                window.URL.revokeObjectURL(downloadUrl);
+                setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
 
                 setDownloads(prev => prev.map(d =>
                     d.id === downloadId ? { ...d, status: 'completed', progress: 100 } : d
@@ -131,9 +131,17 @@ export default function CatalogMode({ downloads, setDownloads, abortControllersR
                 return newSet;
             });
 
-            setTimeout(() => {
-                setDownloads(prev => prev.filter(d => d.id !== downloadId));
-            }, 5000);
+            // On retire automatiquement uniquement si c'est fini avec succès
+            // Les erreurs et annulations restent pour que l'utilisateur les voie
+            setDownloads(prev => {
+                const current = prev.find(d => d.id === downloadId);
+                if (current && current.status === 'completed') {
+                    setTimeout(() => {
+                        setDownloads(p => p.filter(d => d.id !== downloadId));
+                    }, 5000);
+                }
+                return prev;
+            });
         }
     };
 

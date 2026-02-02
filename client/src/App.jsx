@@ -125,15 +125,22 @@ function App() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      // On laisse un petit délai avant de révoquer l'URL
+      setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
 
       setDownloads(prev => prev.map(d =>
         d.id === downloadId ? { ...d, status: 'completed', progress: 100 } : d
       ));
 
-      setTimeout(() => {
-        setDownloads(prev => prev.filter(d => d.id !== downloadId));
-      }, 5000);
+      setDownloads(prev => {
+        const current = prev.find(d => d.id === downloadId);
+        if (current && current.status === 'completed') {
+          setTimeout(() => {
+            setDownloads(p => p.filter(d => d.id !== downloadId));
+          }, 5000);
+        }
+        return prev;
+      });
 
     } catch (err) {
       if (axios.isCancel(err)) {
@@ -147,13 +154,10 @@ function App() {
           d.id === downloadId ? { ...d, status: 'error' } : d
         ));
 
-        const errorMsg = err.response?.data?.error || "Erreur lors du téléchargement. Vérifiez que yt-dlp et FFmpeg sont bien installés dans le dossier server.";
+        const errorMsg = err.response?.data?.error || "Une erreur est survenue lors du téléchargement. Veuillez réessayer.";
         alert(errorMsg);
       }
-
-      setTimeout(() => {
-        setDownloads(prev => prev.filter(d => d.id !== downloadId));
-      }, 5000);
+      // On ne retire pas l'erreur/annulation automatiquement
     } finally {
       delete abortControllersRef.current[downloadId];
       setDownloadingId(null);
@@ -161,8 +165,10 @@ function App() {
   };
 
   const handleCancelDownload = (downloadId) => {
-    if (abortControllersRef.current[downloadId]) {
-      abortControllersRef.current[downloadId].abort();
+    const controller = abortControllersRef.current[downloadId];
+    if (controller) {
+      controller.abort();
+      delete abortControllersRef.current[downloadId];
     }
   };
 
