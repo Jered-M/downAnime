@@ -2,38 +2,138 @@ import React, { useState } from 'react';
 import { Search, List, Loader2, Download, ExternalLink, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import './CatalogStyles.css';
 
 const API_BASE = 'http://localhost:5000';
 
-export default function CatalogMode() {
+export default function CatalogMode({ downloads, setDownloads, abortControllersRef }) {
     const [catalogUrl, setCatalogUrl] = useState('');
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [episodes, setEpisodes] = useState([]);
+    const [downloadingIds, setDownloadingIds] = useState(new Set());
 
     const handleAnalyzeCatalog = async (e) => {
         e.preventDefault();
         if (!catalogUrl) return;
 
         setIsAnalyzing(true);
+        setEpisodes([]);
         try {
-            // Note: On utilise le même endpoint d'analyse ou un futur spécial catalogue
-            const response = await axios.post(`${API_BASE}/analyze`, { url: catalogUrl });
-            // Si le backend renvoie une liste d'épisodes (cas VoirAnime saison)
-            if (response.data.episodes) {
+            console.log("📋 Analyse du catalogue:", catalogUrl);
+            const response = await axios.post(`${API_BASE}/catalog`, { url: catalogUrl });
+
+            if (response.data.episodes && response.data.episodes.length > 0) {
+                console.log(`✅ ${response.data.episodes.length} épisodes trouvés`);
                 setEpisodes(response.data.episodes);
             } else {
-                // Fallback : on met juste l'épisode trouvé
-                setEpisodes([{
-                    title: response.data.title || "Épisode trouvé",
-                    url: catalogUrl,
-                    id: '1'
-                }]);
+                alert("Aucun épisode trouvé sur cette page. Assurez-vous d'être sur la page de la saison/série.");
             }
         } catch (err) {
             console.error(err);
-            alert("Erreur lors de l'analyse du catalogue.");
+            const errorMsg = err.response?.data?.error || err.response?.data?.suggestion || "Erreur lors de l'analyse du catalogue.";
+            alert(errorMsg);
         } finally {
             setIsAnalyzing(false);
+        }
+    };
+
+    const handleDownloadEpisode = async (episode, index) => {
+        const episodeId = `ep-${index}`;
+        const downloadId = `dl-cat-${Date.now()}-${index}`;
+        const abortController = new AbortController();
+
+        if (abortControllersRef) {
+            abortControllersRef.current[downloadId] = abortController;
+        }
+
+        setDownloadingIds(prev => new Set(prev).add(episodeId));
+        setDownloads(prev => [...prev, {
+            id: downloadId,
+            title: episode.title,
+            status: 'downloading',
+            progress: 0,
+            loaded: 0
+        }]);
+
+        try {
+            console.log("📥 Téléchargement de:", episode.title);
+
+            const analyzeResponse = await axios.post(`${API_BASE}/analyze`, { url: episode.url });
+
+            if (analyzeResponse.data.formats && analyzeResponse.data.formats[0]) {
+                const format = analyzeResponse.data.formats[0];
+
+                const downloadResponse = await axios.post(`${API_BASE}/download`, {
+                    url: format.url,
+                    format_id: format.id,
+                    referer: episode.url,
+                    title: episode.title
+                }, {
+                    responseType: 'blob',
+                    signal: abortController.signal,
+                    onDownloadProgress: (progressEvent) => {
+                        const loaded = progressEvent.loaded;
+                        const total = progressEvent.total;
+                        const progress = total ? Math.round((loaded * 100) / total) : 0;
+
+                        setDownloads(prev => prev.map(d =>
+                            d.id === downloadId ? { ...d, progress, loaded } : d
+                        ));
+                    }
+                });
+
+                const downloadUrl = window.URL.createObjectURL(new Blob([downloadResponse.data]));
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+
+                const contentDisposition = downloadResponse.headers['content-disposition'];
+                let fileName = `${episode.title}.mp4`;
+                if (contentDisposition) {
+                    const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/);
+                    if (fileNameMatch && fileNameMatch.length === 2) fileName = fileNameMatch[1];
+                }
+
+                link.setAttribute('download', fileName);
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+
+                setDownloads(prev => prev.map(d =>
+                    d.id === downloadId ? { ...d, status: 'completed', progress: 100 } : d
+                ));
+            } else {
+                setDownloads(prev => prev.map(d =>
+                    d.id === downloadId ? { ...d, status: 'error' } : d
+                ));
+                alert("Impossible de trouver le lien de téléchargement pour cet épisode.");
+            }
+        } catch (err) {
+            if (axios.isCancel(err)) {
+                console.log("📥 Téléchargement annulé par l'utilisateur");
+                setDownloads(prev => prev.map(d =>
+                    d.id === downloadId ? { ...d, status: 'cancelled' } : d
+                ));
+            } else {
+                console.error(err);
+                setDownloads(prev => prev.map(d =>
+                    d.id === downloadId ? { ...d, status: 'error' } : d
+                ));
+                alert("Erreur lors du téléchargement.");
+            }
+        } finally {
+            if (abortControllersRef) {
+                delete abortControllersRef.current[downloadId];
+            }
+            setDownloadingIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(episodeId);
+                return newSet;
+            });
+
+            setTimeout(() => {
+                setDownloads(prev => prev.filter(d => d.id !== downloadId));
+            }, 5000);
         }
     };
 
@@ -74,19 +174,45 @@ export default function CatalogMode() {
                         {episodes.map((ep, index) => (
                             <motion.div
                                 key={index}
-                                className="episode-card"
+                                className="episode-card-premium"
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: index * 0.05 }}
                             >
-                                <div className="episode-num">{index + 1}</div>
-                                <div className="episode-info">
-                                    <h4>{ep.title}</h4>
-                                    <span className="episode-status">Prêt</span>
+                                <div className="episode-thumbnail">
+                                    {ep.thumbnail ? (
+                                        <img src={ep.thumbnail} alt={ep.title} />
+                                    ) : (
+                                        <div className="thumbnail-placeholder">
+                                            <Play size={32} />
+                                        </div>
+                                    )}
+                                    <div className="episode-overlay">
+                                        <span className="episode-number">#{index + 1}</span>
+                                    </div>
                                 </div>
-                                <button className="episode-download-btn">
-                                    <Download size={18} />
-                                </button>
+                                <div className="episode-content">
+                                    <h4 className="episode-title-text">{ep.title}</h4>
+                                    <div className="episode-actions">
+                                        <button
+                                            className="episode-download-btn"
+                                            onClick={() => handleDownloadEpisode(ep, index)}
+                                            disabled={downloadingIds.has(`ep-${index}`)}
+                                        >
+                                            {downloadingIds.has(`ep-${index}`) ? (
+                                                <>
+                                                    <Loader2 className="spinning" size={16} />
+                                                    <span>Téléchargement...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Download size={16} />
+                                                    <span>Télécharger</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
                             </motion.div>
                         ))}
                     </div>
