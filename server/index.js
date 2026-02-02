@@ -108,8 +108,12 @@ app.post('/analyze', async (req, res) => {
     let browser = null;
 
     try {
+        if (!url || !url.startsWith('http')) {
+            return res.status(400).json({ error: "URL invalide fournie." });
+        }
+
         let cleanUrl = url;
-        if (url && url.includes('youtube.com/watch') && url.includes('&list=')) {
+        if (url.includes('youtube.com/watch') && url.includes('&list=')) {
             cleanUrl = url.split('&list=')[0];
             console.log("🧹 Lien YouTube nettoyé :", cleanUrl);
         }
@@ -207,11 +211,13 @@ app.post('/analyze', async (req, res) => {
         await new Promise(r => setTimeout(r, 4000));
 
         if (targetVideo) {
+            await browser.close();
             res.json({
                 title: "Vidéo extraite via RADAR",
                 formats: [{ id: 'best', ext: 'mp4', resolution: 'Qualité Directe', url: targetVideo }]
             });
         } else {
+            await browser.close();
             res.status(400).json({ error: "Aucun flux détecté." });
         }
     } catch (error) {
@@ -274,15 +280,17 @@ app.post('/download', async (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="${safeTitle}.mp4"`);
         res.setHeader('Content-Type', 'video/mp4');
 
+        const safeReferer = referer ? referer.replace(/[\r\n]/g, '') : null;
+
         // Préparation des headers pour FFmpeg
         let headers = `User-Agent: ${mainUA}\r\n`;
-        if (referer) {
-            headers += `Referer: ${referer}\r\n`;
+        if (safeReferer) {
+            headers += `Referer: ${safeReferer}\r\n`;
             try {
-                const refUrl = new URL(referer);
+                const refUrl = new URL(safeReferer);
                 headers += `Origin: ${refUrl.protocol}//${refUrl.host}\r\n`;
             } catch (e) {
-                if (referer.includes('vidmoly')) headers += `Origin: https://vidmoly.biz\r\n`;
+                if (safeReferer.includes('vidmoly')) headers += `Origin: https://vidmoly.biz\r\n`;
             }
         }
 
@@ -299,7 +307,11 @@ app.post('/download', async (req, res) => {
         console.log("🚀 Lancement FFmpeg direct...");
         const ffmpegProcess = spawn(path.join(ffmpegPath, 'ffmpeg.exe'), ffmpegArgs);
 
-        ffmpegProcess.stdout.pipe(res);
+        pipeline(ffmpegProcess.stdout, res, (err) => {
+            if (err && err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+                console.error("⚠️ Pipeline FFmpeg -> Response error:", err.message);
+            }
+        });
 
         ffmpegProcess.stderr.on('data', d => {
             const msg = d.toString();
